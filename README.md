@@ -1,8 +1,8 @@
 # JulianaNFC
-JulianaNFC is een Win32-programmaatje dat pollt voor NFC tags en deze vervolgens over een WebSocket verstuurt.
+JulianaNFC is een Python-programmaatje dat pollt voor NFC tags en deze vervolgens over een WebSocket verstuurt. Werkt alleen onder Linux voor zover bekend.
 
 ## Hoe dan?
-Je start JulianaNFC.exe (eventueel met de command line switch '/toeter' voor extra escalatie). Vanuit een browser connect je met de WebSocket.
+Installeer onder Linux de PC/SC Smart Card daemon ( [PCSClite](https://pcsclite.alioth.debian.org/pcsclite.html) - [Debian PKG](https://packages.debian.org/source/stretch/pcsc-lite) ) en zorg dat deze gestart is. Installeer de requirements uit requirements.txt en start juliana.py. Vanuit een browser connect je met de WebSocket.
 
     socket = new WebSocket("ws://localhost:3000", "nfc");
 
