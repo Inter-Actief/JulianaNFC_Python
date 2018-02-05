@@ -1,0 +1,13 @@
+[Unit]
+Description=JulianaNFC Python Daemon
+Requires=pcscd.service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/JulianaNFC_Python
+ExecStart=/usr/bin/python3 /opt/JulianaNFC_Python/juliana.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
