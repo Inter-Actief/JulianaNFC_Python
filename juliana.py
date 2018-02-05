@@ -6,6 +6,7 @@ import asyncio
 
 import time
 import traceback
+from ssl import SSLContext
 
 import websockets
 from smartcard.CardConnection import CardConnection
@@ -109,5 +110,5 @@ if __name__ == "__main__":
     else:
         print("Starting in CLI mode...")
     monitor = CardMonitor()
-    asyncio.get_event_loop().run_until_complete(websockets.serve(websocket_handler, 'localhost', 3000))
+    asyncio.get_event_loop().run_until_complete(websockets.serve(websocket_handler, 'localhost', 3000, ssl=SSLContext()))
     asyncio.get_event_loop().run_forever()
