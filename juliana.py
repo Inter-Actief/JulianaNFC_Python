@@ -1,4 +1,5 @@
-import json
+#!/usr/bin/python3 -u
+
 import random
 import string
 import traceback
