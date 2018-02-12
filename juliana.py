@@ -10,6 +10,7 @@ from smartcard.CardMonitoring import CardMonitor, CardObserver
 
 from flask import Flask, render_template
 from flask_socketio import SocketIO, emit
+from subprocess import Popen
 
 
 class RfidCardConnectionObserver(CardConnectionObserver):
@@ -82,6 +83,7 @@ def on_message(message):
 
 def send_nfc_tag(card):
     print("Sending:", card)
+    Popen(["/usr/bin/xset", "dpms", "force", "on"], env={"DISPLAY": ":0"})
     socketio.emit('nfc_read', card)
 
 
