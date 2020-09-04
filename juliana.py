@@ -67,7 +67,7 @@ class RfidCardObserver(CardObserver):
 app = Flask(__name__)
 app.debug = False
 app.config['SECRET_KEY'] = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(20))
-socketio = SocketIO(app)
+socketio = SocketIO(app, cors_allowed_origins='*')
 
 
 @app.route('/')
@@ -83,7 +83,7 @@ def on_message(message):
 
 def send_nfc_tag(card):
     print("Sending:", card)
-    Popen(["/bin/su", "kiosk", "-s", "/bin/bash", "-c", "/usr/bin/xset -display :0 dpms force on"])
+    #Popen(["/bin/su", "kiosk", "-s", "/bin/bash", "-c", "/usr/bin/xset -display :0 dpms force on"])
     socketio.emit('nfc_read', card)
 
 
@@ -91,4 +91,5 @@ if __name__ == '__main__':
     monitor = CardMonitor()
     observer = RfidCardObserver()
     monitor.addObserver(observer)
-    socketio.run(app)
+    socketio.run(app, port=3000)
+
