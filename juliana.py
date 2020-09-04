@@ -83,7 +83,7 @@ def on_message(message):
 
 def send_nfc_tag(card):
     print("Sending:", card)
-    #Popen(["/bin/su", "kiosk", "-s", "/bin/bash", "-c", "/usr/bin/xset -display :0 dpms force on"])
+    Popen(["/bin/su", "kiosk", "-s", "/bin/bash", "-c", "/usr/bin/xset -display :0 dpms force on"])
     socketio.emit('nfc_read', card)
 
 
