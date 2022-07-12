@@ -6,7 +6,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/JulianaNFC_Python
-ExecStart=/usr/bin/python3 /opt/JulianaNFC_Python/juliana.py
+ExecStart=/usr/bin/python3 /opt/JulianaNFC_Python/juliana.py -c
 Restart=always
 
 [Install]
