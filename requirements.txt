@@ -1,5 +1,6 @@
 pyscard>=2.0,<2.1
 flask
 flask-sock>=0.5,<1.0
+flask-cors>=3.0.10,<3.1
 wxPython>=4.1.1
 plyer>=2.0.0,<2.1

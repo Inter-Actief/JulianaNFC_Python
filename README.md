@@ -29,14 +29,14 @@ Installeer onder Linux de PC/SC Smart Card daemon ( [PCSClite](https://pcsclite.
 ### Websocket
 Vanuit een browser connect je met de WebSocket.
 
-    socket = new WebSocket('ws://localhost:3000', 'nfc');
+    socket = new WebSocket('ws://localhost:3000');
     socket.onmessage = function (event) {
         var rfid = JSON.parse(event.data);
         console.log("Tag scanned!");
         console.log(rfid);
     };
 
-Als er een kaart wordt gescand ontvang je in het 'nfc_read' event een JSON-object met kaartinfo over de socket.
+Als er een kaart wordt gescand ontvang je over de websocket een JSON-object (in het veld `event.data` hierboven) met kaartinfo over de socket.
 
     {"type": "iso-x", "atqa":"12:34", "uid":"ab:cd:ef:gh", "sak":"56"}
 

@@ -14,17 +14,16 @@ from datetime import datetime
 from subprocess import Popen
 
 import smartcard.System
-from smartcard.CardConnection import CardConnection
-from smartcard.CardConnectionObserver import CardConnectionObserver
 from smartcard.CardMonitoring import CardMonitor, CardObserver
 from smartcard.ReaderMonitoring import ReaderMonitor, ReaderObserver
 from smartcard.Exceptions import CardConnectionException
 
-from flask import Flask, render_template, request
+from flask import Flask, request
+from flask_cors import CORS
 from flask_sock import Sock
 
 
-APP_VERSION = "3.0"
+APP_VERSION = "3.1"
 APP_NAME = "JulianaNFC"
 APP_AUTHOR = "Kevin Alberts, I.C.T.S.V. Inter-/Actief/"
 APP_SUPPORT = "www@inter-actief.net"
@@ -264,6 +263,7 @@ app = Flask(__name__)
 app.debug = False
 app.config['SECRET_KEY'] = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(20))
 sock = Sock(app)
+cors = CORS(app, supports_credentials=True)
 
 
 socket_clients = []
