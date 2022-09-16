@@ -7,16 +7,18 @@ import time
 import random
 import string
 import logging
-import traceback
 import threading
+import traceback
 
 from datetime import datetime
 from subprocess import Popen
+from typing import Union
 
-import smartcard.System
-from smartcard.CardMonitoring import CardMonitor, CardObserver
-from smartcard.ReaderMonitoring import ReaderMonitor, ReaderObserver
-from smartcard.Exceptions import CardConnectionException
+import nfc
+import nfc.tag.tt1
+import nfc.tag.tt2
+import nfc.tag.tt3
+import nfc.tag.tt4
 
 from flask import Flask, request
 from flask_cors import CORS
@@ -26,7 +28,7 @@ from tendo.singleton import SingleInstance, SingleInstanceException
 from simple_websocket.ws import ConnectionClosed
 
 
-APP_VERSION = "3.1"
+APP_VERSION = "3.2"
 APP_NAME = "JulianaNFC"
 APP_AUTHOR = "Kevin Alberts, I.C.T.S.V. Inter-/Actief/"
 APP_SUPPORT = "www@inter-actief.net"
@@ -38,6 +40,8 @@ HAS_GUI = False
 DO_KIOSK_XSET = False
 gui_app = None
 
+# RFID type targets to listen for, see https://nfcpy.readthedocs.io/en/latest/modules/clf.html#contactless-frontend
+RFID_TARGETS = ['106A', '106B', '212F']
 
 logging.basicConfig(level=logging.INFO)
 
@@ -55,215 +59,163 @@ def print_console(message, level="info"):
         logging.critical(message)
     if HAS_GUI:
         global gui_app
-        gui_app.add_message(f"[{datetime.now():%H:%M:%S}] {message}")
+        if gui_app is not None:
+            gui_app.add_message(f"[{datetime.now():%H:%M:%S}] {message}")
 
 
 def resource_path(relative):
     return os.path.join(getattr(sys, "_MEIPASS", os.path.abspath(".")), relative)
 
 
-def notify_toast(title, message, app_icon="resources/main.ico"):
-    if HAS_GUI:
+def notify_toast(title, message, app_icon="resources/main.ico", force=False):
+    if HAS_GUI or force:
         from notifypy import Notify
         notification = Notify()
+        notification.application_name = f"{APP_NAME} {APP_VERSION}"
         notification.title = title
         notification.message = message
         notification.icon = resource_path(app_icon)
         notification.send(block=False)
 
 
-def debug_desfire_version(version):
-    # Referenced from: 
-    # https://github.com/EsupPortail/esup-nfc-tag-server/blob/d27858c653635093b670d1a5a68f742b51176207/src/main/java/nfcjlib/core/DESFireEV1.java#L2106
-    # hardware info
-    print_console("Hardware info", level="debug")
-    print_console("       vendor: {:02x}".format(version[0]), level="debug")
-    print_console(" (NXP)" if version[0] == 0x04 else '', level="debug")
-    print_console(" type/subtype: {:02x}/{:02x}".format(version[1], version[2]), level="debug")
-    print_console("      version: {}.{}".format(version[3], version[4]), level="debug")
-    exp = (version[5] >> 1)
-    print_console(" storage size: {}".format(2 ** exp), level="debug")
-    print_console(" bytes" if version[5] & 0x01 == 0 else " to {} bytes".format(2 ** (exp + 1)), level="debug")
-    print_console("     protocol: 0x{:02x}".format(version[6]), level="debug")
-    print_console("            ISO 14443-3 and ISO 14443-4" if version[6] == 0x05 else "", level="debug")
+class RfidCardManager(threading.Thread):
+    """Reads card information when a card is sensed. Stops when the reader is not available."""
+    def __init__(self, device: nfc.clf.device.Device):
+        super(RfidCardManager, self).__init__()
+        self.device = device
+        self.log = logging.getLogger(self.__class__.__name__)
+        self.running = True
+        self.daemon = True
+        self.just_started = True
+        self.last_scanned = None
 
-    # software info
-    print_console("Software info", level="debug")
-    print_console("       vendor: {:02x}".format(version[7]), level="debug")
-    print_console(" (NXP)" if version[7] == 0x04 else '', level="debug")
-    print_console(" type/subtype: {:02x}/{:02x}".format(version[8], version[9]), level="debug")
-    print_console("      version: {}.{}".format(version[10], version[11]), level="debug")
-    exp = (version[12] >> 1);
-    print_console(" storage size: {}".format(2 ** exp), level="debug")
-    print_console(" bytes" if version[12] & 0x01 == 0 else " to {} bytes".format(2 ** (exp + 1)), level="debug")
-    print_console("     protocol: 0x{:02x}".format(version[13]), level="debug")
-    print_console("            ISO 14443-3 and ISO 14443-4" if version[6] == 0x05 else "", level="debug")
+    def run(self):
+        self.log.debug(f"Started RFID card manager for device {self.device}. Waiting for a card...")
+        while self.running:
+            tag = clf.connect(rdwr={
+                'targets': RFID_TARGETS,
+                'on-connect': self.on_connect,
+                'on-release': self.on_release
+            })
+            self.log.debug(f"Tag removed: {tag}")
 
-    # other info
-    print_console("Other info", level="debug")
-    print_console(" batch number: {}".format(":".join("{:02x}".format(x) for x in version[21:26])), level="debug")
-    print_console("          UID: {}".format(":".join("{:02x}".format(x) for x in version[14:21])), level="debug")
-    print_console("   production: week 0x{:02x}, year 0x{:02x}  ???".format(version[22], version[23]), level="debug")
+    @staticmethod
+    def handle_card(card: nfc.tag.Tag):
+        if isinstance(card, nfc.tag.tt1.Type1Tag):
+            # Unsupported
+            print_console(f"A card was scanned, but the type is unsupported. "
+                          f"(Type {card.type}, ID: {card.identifier.hex()})", level="error")
+            notify_toast(title="Unsupported card", message="A card was scanned, but the type is not supported.")
+        elif isinstance(card, nfc.tag.tt2.Type2Tag):
+            RfidCardManager.handle_card_type_a(card)
+        elif isinstance(card, nfc.tag.tt3.Type3Tag):
+            # Unsupported
+            print_console(f"A card was scanned, but the type is unsupported. "
+                          f"(Type {card.type}, ID: {card.identifier.hex()})", level="error")
+            notify_toast(title="Unsupported card", message="A card was scanned, but the type is not supported.")
+        elif isinstance(card, nfc.tag.tt4.Type4ATag):
+            RfidCardManager.handle_card_type_a(card)
+        elif isinstance(card, nfc.tag.tt4.Type4BTag):
+            RfidCardManager.handle_card_type_4b(card)
+            pass  # Unimplemented
+        else:
+            # Unknown
+            print_console(f"A card was scanned, but the type is unknown. "
+                          f"(Type {card.type}, ID: {card.identifier.hex()})", level="error")
+            notify_toast(title="Unknown card", message="A card was scanned, but the type is not supported.")
 
+    @staticmethod
+    def handle_card_type_a(card: Union[nfc.tag.tt2.Type2Tag, nfc.tag.tt4.Type4ATag]):
+        logging.debug(f"Scanned Type 2 or Type 4A card: {card}")
 
-def process_desfire_response(cardconnection, version_info):
-    try:
-        if version_info[10] not in [0x01, 0x02]:
-            if DEBUG:
-                debug_desfire_version(version_info)
-            raise IndexError("Only DESFire EV1 and EV2 supported for now (found version {})".format(version_info[10]))
+        # If the UID is 4 bytes long, and the first byte is 0x08, the card is using a Random-ID, so deny it.
+        # See section 2.1.1: https://www.nxp.com/docs/en/application-note/AN10927.pdf
+        if len(card.identifier) == 4 and card.identifier[0] == 0x08:
+            print_console(f"A Type A card was scanned, but it is using a random UID. "
+                          f"(Type {card.type}, ID: {card.identifier.hex()})", level="error")
+            notify_toast(title="Unsupported card", message="The card that was scanned has a randomized ID, "
+                                                           "so it cannot be used.")
+        # If the UID is 4 bytes long, and the first byte is xF (x can be any number),
+        # the card is using a fixed but non-unique ID, so deny it.
+        # See section 2.1.2: https://www.nxp.com/docs/en/application-note/AN10927.pdf
+        elif len(card.identifier) == 4 and (card.identifier[0] & 0x0F) == 0x0F:
+            print_console(f"A Type A card was scanned, but it is using a non-unique ID. "
+                          f"(Type {card.type}, ID: {card.identifier.hex()})", level="error")
+            notify_toast(title="Unsupported card", message="The card that was scanned has a non-unique ID, "
+                                                           "so it cannot be used.")
+        else:
+            send_nfc_tag({
+                "type": "iso-a",
+                "uid": ":".join("{:02x}".format(b) for b in card.identifier),
+                "atqa": ":".join("{:02x}".format(b) for b in card.target.sens_res[::-1]),  # Only with iso-a
+                "sak": ":".join("{:02x}".format(b) for b in card.target.sel_res),  # Only with iso-a
+            })
 
-        uid = version_info[14:21]
-
-        if all(x == 0x00 for x in uid):
-            raise IndexError("DESFire EV{} card with all-zero UID found (random UID mode)".format(version_info[10]))
-
-        send_nfc_tag({
-            "type": "iso-4",
-            "uid": ":".join("{:02x}".format(x) for x in uid),
-            "atqa": "{:02x}:{:02x}".format(0x03, 0x44),  # Only with iso-a
-            "sak": "{:02x}".format(0x20),  # Only with iso-a
-        })
-
-        # Beep card reader and set LED to green.
-        cardconnection.transmit(bytes=[0xFF, 0x00, 0x40, 0x34, 0x04, 0x02, 0x02, 0x01, 0x01])
-    except IndexError as e:
-        traceback.print_exc()
-        print_console(f"Invalid card scan - {e}", level="error")
-        notify_toast(title="Invalid card scan", message=f"{e}")
-
-
-def process_classic_a_response(cardconnection, rdata, sw1, sw2):
-    try:
-        sak = rdata[6]
-        uidlen = rdata[7]
-        atqa = rdata[4:6]
-        uid = rdata[8:(8 + uidlen)]
-
-        send_nfc_tag({
-            "type": "iso-a",
-            "uid": ":".join("{:02x}".format(x) for x in uid),
-            "atqa": "{:02x}:{:02x}".format(atqa[0], atqa[1]),  # Only with iso-a
-            "sak": "{:02x}".format(sak),  # Only with iso-a
-        })
-
-        # Beep card reader and set LED to green.
-        cardconnection.transmit(bytes=[0xFF, 0x00, 0x40, 0x34, 0x04, 0x02, 0x02, 0x01, 0x01])
-    except IndexError as e:
-        traceback.print_exc()
-        print_console(f"Invalid card scan, please retry - {e}", level="error")
-        notify_toast(title="Invalid card scan", message=f"Please retry the last card scan - {e}")
-
-
-def process_classic_b_response(cardconnection, atr):
-    try:
-        uidlen = 4
-        uid = atr[5:(5 + uidlen)]
-
+    @staticmethod
+    def handle_card_type_4b(card: nfc.tag.tt4.Type4BTag):
+        logging.debug(f"Scanned Type 4B card: {card} {card.identifier.hex()}")
         send_nfc_tag({
             "type": "iso-b",
-            "uid": ":".join("{:02x}".format(x) for x in uid)
+            "uid": ":".join("{:02x}".format(b) for b in card.identifier),
         })
 
-        # Beep card reader and set LED to green.
-        cardconnection.transmit(bytes=[0xFF, 0x00, 0x40, 0x34, 0x04, 0x02, 0x02, 0x01, 0x01])
-    except IndexError as e:
-        traceback.print_exc()
-        print_console(f"Invalid card scan, please retry - {e}", level="error")
-        notify_toast(title="Invalid card scan", message=f"Please retry the last card scan - {e}")
+    @staticmethod
+    def on_connect(tag):
+        # Read the tag
+        RfidCardManager.handle_card(tag)
+        # Resume the main thread loop only after the card has been removed from the reader
+        return True
+
+    @staticmethod
+    def on_release(tag):
+        # Loop while card is present
+        while True:
+            time.sleep(0.3)
+            if not clf.sense(*[nfc.clf.RemoteTarget(target) for target in RFID_TARGETS]):
+                break
+        logging.debug(f"Tag released: {tag}. Class: {tag.__class__}")
 
 
-class RfidReaderObserver(ReaderObserver):
-    def update(self, observable, actions):
-        (added, removed) = actions
-        for reader in added:
-            print_console(f"Card reader found: {reader}", level="warning")
-            notify_toast(title="Card reader connected", message=f"{reader} is now available")
-        for reader in removed:
-            print_console(f"Card reader removed: {reader}", level="warning")
-            notify_toast(title="Card reader disconnected", message=f"{reader} is no longer available")
-        if not smartcard.System.readers():
-            print_console(f"No readers found.")
+class RfidReaderManager(threading.Thread):
+    """Opens and closes reader connections when a reader is disconnected / connected from the PC"""
+    def __init__(self, clf: nfc.ContactlessFrontend, target: str):
+        super(RfidReaderManager, self).__init__()
+        self.clf = clf
+        self.target = target
+        self.log = logging.getLogger(self.__class__.__name__)
+        self.running = True
+        self.daemon = True
+        self.just_started = True
+        self.card_manager = None
 
-
-class RfidCardObserver(CardObserver):
-    def update(self, observable, actions):
-        (added, removed) = actions
-        if added:
-            for card in added:
-                conn = card.createConnection()
+    def run(self):
+        self.log.debug("Started RFID reader manager.")
+        while self.running:
+            # If a reader is opened, do nothing. Else, try to open a new reader.
+            if self.clf.device:
+                time.sleep(3)
+            else:
+                self.clf.close()
                 try:
-                    conn.connect()
-                except CardConnectionException as e:
-                    traceback.print_exc()
-                    print_console(f"Could not connect to card, please retry - {e}", level="error")
-                    notify_toast(title="Invalid card scan", message=f"Please retry the last card scan\n{e.__class__.__name__}: {e}")
-                    continue
-
-                # Set card reader LED to orange.
-                conn.transmit(bytes=[0xFF, 0x00, 0x40, 0x3C, 0x04, 0x01, 0x01, 0x01, 0x00])
-                # If we didn't turn the buzzer off yet, disable it.
-                conn.transmit(bytes=[0xFF, 0x00, 0x52, 0x00, 0x00])
-
-                # Ask the card for its ATR
-                try:
-                    atr = conn.getATR()
-                except CardConnectionException as e:
-                    traceback.print_exc()
-                    print_console(f"Invalid card scan, please retry - {e}", level="error")
-                    notify_toast(title="Invalid card scan", message=f"Please retry the last card scan\n{e.__class__.__name__}: {e}")
-                    continue
-
-                atr_str = "".join("{:02x}".format(x) for x in atr)
-                if atr_str == "3b8180018080":
-                    # DESFire card, retrieve data in a different way
-                    # Keep retrying until success, as it can be the card was improperly shut down,
-                    # or the connection is bad, which can make these multiple commands fail pretty easily.
-                    # References:
-                    # - https://stackoverflow.com/questions/29819356/apdu-for-getting-uid-from-mifare-desfire
-                    # - https://stackoverflow.com/questions/40101316/whats-the-difference-between-desfire-and-desfire-ev1-cards
-                    # - https://stackoverflow.com/questions/15967255/how-to-get-sak-to-identify-smart-card-type-using-java
-                    # - https://smartcard-atr.apdu.fr/parse?ATR=3b8180018080
-                    scan_success = False
-                    while not scan_success:
-                        version_info = []
-                        try:
-                            rdata, s1, s2 = conn.transmit(bytes=[0x90, 0x60, 0x00, 0x00, 0x00])
-                            if s1 != 0x91 or s2 != 0xAF:  # If not MORE_DATA
-                                raise ValueError("Failed on initial getVersion")
-                            version_info.extend(rdata)
-                            rdata, s1, s2 = conn.transmit(bytes=[0x90, 0xAF, 0x00, 0x00, 0x00])
-                            if s1 != 0x91 or s2 != 0xAF:  # If not MORE_DATA
-                                raise ValueError("Failed on second getVersion")
-                            version_info.extend(rdata)
-                            rdata, s1, s2 = conn.transmit(bytes=[0x90, 0xAF, 0x00, 0x00, 0x00])
-                            if s1 != 0x91 or s2 != 0x00:  # If not CMD_SUCCESS
-                                raise ValueError("Failed on final getVersion")
-                            version_info.extend(rdata)
-                            process_desfire_response(conn, version_info)
-                            scan_success = True
-                        except ValueError as e:
-                            logging.warning(f"DESFire getVersion fail, retrying: {e}")
-                        except IndexError as e:
-                            traceback.print_exc()
-                            print_console(f"Invalid card scan, please retry - {e}", level="error")
-                            notify_toast(title="Invalid card scan", message=f"Please retry the last card scan\n{e.__class__.__name__}: {e}")
-                        except CardConnectionException as e:
-                            scan_success = True
-                            traceback.print_exc()
-                            print_console(f"Invalid card scan, please retry - {e}", level="error")
-                            notify_toast(title="Invalid card scan", message=f"Please retry the last card scan\n{e.__class__.__name__}: {e}")
-                elif atr[0] == 0x3b and atr[4] == 0x80:
-                    # MiFare Classic type A
-                    rdata, s1, s2 = conn.transmit(bytes=[0xFF, 0x00, 0x00, 0x00, 0x04, 0xD4, 0x4A, 0x01, 0x00])
-                    process_classic_a_response(conn, rdata, s1, s2)
-                elif atr[0] == 0x3b and atr[4] == 0x50:
-                    # MiFare Classic type B
-                    process_classic_b_response(conn, atr)
-                else:
-                    print_console(f"A card was scanned, but the type was unknown. (ATR 0x{atr_str[:12]})", level="error")
-                    notify_toast(title="Unknown card", message="A card was scanned, but the type was unknown.")
-                conn.disconnect()
+                    if self.clf.open(self.target):
+                        print_console(f"Found NFC card reader: {self.clf.device}", level="info")
+                        notify_toast(title="Card reader connected", message=f"{self.clf.device} is now available")
+                        if self.card_manager is not None:
+                            self.card_manager.running = False
+                        self.card_manager = RfidCardManager(self.clf.device)
+                        self.card_manager.start()
+                    else:
+                        if self.just_started:
+                            self.just_started = False
+                            print_console("No readers found.", level="warning")
+                            notify_toast(title="No card reader", message="There are no card readers available")
+                        time.sleep(3)
+                except Exception as e:
+                    error = traceback.format_exc(e)
+                    print_console(f"Could not open card reader: {e}\n{error}", level="error")
+                    notify_toast(title="Card reader error",
+                                 message=f"Could not open card reader. See info window or console for details.")
+                    sys.exit(2)
 
 
 app = Flask(__name__)
@@ -297,9 +249,11 @@ def send_nfc_tag(card):
         Popen(["/bin/su", "kiosk", "-s", "/bin/bash", "-c", "/usr/bin/xset -display :0 dpms force on"])
 
     if card['type'] == "iso-a":
-        print_console(f"Scanned: ISO Type A -- UID<{card['uid']}>  ATQA<{card['atqa']}>  SAK<{card['sak']}>", level="info")
+        print_console(f"Scanned: ISO Type A -- UID<{card['uid']}>  ATQA<{card['atqa']}>  SAK<{card['sak']}>",
+                      level="info")
     elif card['type'] == "iso-4":
-        print_console(f"Scanned: ISO DESFire -- UID<{card['uid']}>  ATQA<{card['atqa']}>  SAK<{card['sak']}>", level="info")
+        print_console(f"Scanned: ISO DESFire -- UID<{card['uid']}>  ATQA<{card['atqa']}>  SAK<{card['sak']}>",
+                      level="info")
     elif card['type'] == "iso-b":
         print_console(f"Scanned: ISO Type B -- UID<{card['uid']}>", level="info")
     else:
@@ -338,31 +292,30 @@ if __name__ == '__main__':
     try:
         one_instance_check = SingleInstance()
     except SingleInstanceException:
+        print_console(f"JulianaNFC is already running, please close it before starting again", level="error")
         notify_toast(title="JulianaNFC already running",
-                     message="JulianaNFC is already running, please close it before starting again!")
+                     message="JulianaNFC is already running, please close it before starting again!",
+                     force=True)
+        sys.exit(1)
 
-    if HAS_GUI:
-        gui_thread = threading.Thread(target=run_gui)
-        gui_thread.daemon = True
-        gui_thread.start()
+    try:
+        if HAS_GUI:
+            gui_thread = threading.Thread(target=run_gui)
+            gui_thread.daemon = True
+            gui_thread.start()
 
-        while gui_app is None:
-            time.sleep(0.01)
+            while gui_app is None:
+                time.sleep(0.01)
 
-    readers = smartcard.System.readers()
-    if not readers:
-        print_console("No readers found.", level="warning")
-        notify_toast(title="No card reader", message="There are no card readers available")
-    else:
-        print_console(f"Found {len(readers)} card readers:", level="info")
-        for reader in readers:
-            print_console(f"  - {reader}", level="info")
-            notify_toast(title="Card reader connected", message=f"{reader} is now available")
+        clf = nfc.ContactlessFrontend()
+        reader_manager = RfidReaderManager(clf=clf, target='usb')
+        reader_manager.start()
 
-    reader_monitor = ReaderMonitor()
-    reader_observer = RfidReaderObserver()
-    reader_monitor.addObserver(reader_observer)
-    card_monitor = CardMonitor()
-    card_observer = RfidCardObserver()
-    card_monitor.addObserver(card_observer)
-    app.run(port=3000)
+        app.run(port=3000)
+    except Exception as e:
+        error = traceback.format_exc(e)
+        print_console(f"Generic exception occurred: {e}\n{error}", level="error")
+        notify_toast(title="Juliana has crashed",
+                     message=f"A general error has occurred. See info window or console for details.")
+        sys.exit(2)
+
