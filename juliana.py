@@ -22,6 +22,9 @@ from flask import Flask, request
 from flask_cors import CORS
 from flask_sock import Sock
 
+from tendo.singleton import SingleInstance, SingleInstanceException
+from simple_websocket.ws import ConnectionClosed
+
 
 APP_VERSION = "3.1"
 APP_NAME = "JulianaNFC"
@@ -59,10 +62,14 @@ def resource_path(relative):
     return os.path.join(getattr(sys, "_MEIPASS", os.path.abspath(".")), relative)
 
 
-def notify_toast(title, message, app_icon="resources/main.ico", timeout=3):
+def notify_toast(title, message, app_icon="resources/main.ico"):
     if HAS_GUI:
-        from plyer import notification
-        notification.notify(title=title, message=message, app_icon=resource_path(app_icon), timeout=timeout)
+        from notifypy import Notify
+        notification = Notify()
+        notification.title = title
+        notification.message = message
+        notification.icon = resource_path(app_icon)
+        notification.send(block=False)
 
 
 def debug_desfire_version(version):
@@ -300,7 +307,10 @@ def send_nfc_tag(card):
 
     global socket_clients
     for socket in socket_clients:
-        socket.send(json.dumps(card))
+        try:
+            socket.send(json.dumps(card))
+        except ConnectionClosed:
+            pass
 
 
 def run_gui():
@@ -324,6 +334,12 @@ if __name__ == '__main__':
 
     HAS_GUI = "-c" not in sys.argv
     DO_KIOSK_XSET = "-k" in sys.argv
+
+    try:
+        one_instance_check = SingleInstance()
+    except SingleInstanceException:
+        notify_toast(title="JulianaNFC already running",
+                     message="JulianaNFC is already running, please close it before starting again!")
 
     if HAS_GUI:
         gui_thread = threading.Thread(target=run_gui)
