@@ -1,13 +1,21 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import copy_metadata
+
 block_cipher = None
 
+data = [('resources', 'resources')]
+data.extend(copy_metadata("tendo"))  # To include tendo requirement - https://github.com/pycontribs/tendo/issues/29
+
+hidden_imports = ['threading', 'time', 'queue', 'werkzeug', 'tendo']
+hidden_imports += collect_submodules('nfc')
 
 a = Analysis(['juliana.py'],
              pathex=['.'],
              binaries=[],
-             datas=[('resources', 'resources')],
-             hiddenimports=['threading', 'time', 'queue', 'werkzeug', 'plyer.platforms.win.notification', 'plyer.platforms.linux.notification'],
+             datas=data,
+             hiddenimports=hidden_imports,
              hookspath=[],
              runtime_hooks=[],
              excludes=[],
