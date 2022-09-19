@@ -1,6 +1,5 @@
 [Unit]
 Description=JulianaNFC Python Daemon
-Requires=pcscd.service
 After=network.target
 
 [Service]
