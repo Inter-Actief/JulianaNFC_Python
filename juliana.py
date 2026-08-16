@@ -28,7 +28,7 @@ from tendo.singleton import SingleInstance, SingleInstanceException
 from simple_websocket.ws import ConnectionClosed
 
 
-APP_VERSION = "3.2"
+APP_VERSION = "3.2.1"
 APP_NAME = "JulianaNFC"
 APP_AUTHOR = "Kevin Alberts, I.C.T.S.V. Inter-/Actief/"
 APP_SUPPORT = "www@inter-actief.net"
