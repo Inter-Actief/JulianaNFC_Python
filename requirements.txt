@@ -1,7 +1,7 @@
 nfcpy>=1.0.4,<1.1
-flask>=2.0.3,<2.2
-flask-sock>=0.5,<1.0
-flask-cors>=3.0.10,<3.1
-wxPython>=4.1.1,<4.2
-notify-py>=0.3.3,<0.4
-tendo>=0.2.15,<0.3
+flask>=2.3.3,<2.4
+flask-sock>=0.7.0,<1.0
+flask-cors>=6.0.5,<6.1
+wxPython>=4.3.1,<4.4
+notify-py>=0.3.43,<0.4
+tendo>=0.3.0,<0.4
