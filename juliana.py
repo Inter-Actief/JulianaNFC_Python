@@ -246,7 +246,7 @@ def websocket(ws):
 
 def send_nfc_tag(card):
     if DO_KIOSK_XSET:
-        Popen(["/bin/su", "cookie", "-s", "/bin/bash", "-c", "/usr/sbin/kscreen-doctor --dpms on"])
+        Popen(["/usr/sbin/kscreen-doctor", "--dpms", "on"])
 
     if card['type'] == "iso-a":
         print_console(f"Scanned: ISO Type A -- UID<{card['uid']}>  ATQA<{card['atqa']}>  SAK<{card['sak']}>",
